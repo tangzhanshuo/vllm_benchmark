@@ -11,27 +11,30 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 (which wget && which curl) || (apt-get update && apt-get install -y wget curl)
 
 # run python-based benchmarks and upload the result to buildkite
-python3 benchmarks/benchmark_latency.py --output-json latency_results.json 2>&1 | tee benchmark_latency.txt
-bench_latency_exit_code=$?
+# python3 benchmarks/benchmark_latency.py --output-json latency_results.json 2>&1 | tee benchmark_latency.txt
+# bench_latency_exit_code=$?
 
-python3 benchmarks/benchmark_throughput.py --input-len 256 --output-len 256 --output-json throughput_results.json 2>&1 | tee benchmark_throughput.txt
-bench_throughput_exit_code=$?
+# python3 benchmarks/benchmark_throughput.py --input-len 256 --output-len 256 --output-json throughput_results.json 2>&1 | tee benchmark_throughput.txt
+# bench_throughput_exit_code=$?
 
 # run server-based benchmarks and upload the result to buildkite
-python3 -m vllm.entrypoints.openai.api_server --model meta-llama/Llama-2-7b-chat-hf &
+python3 -m vllm.entrypoints.openai.api_server --model /app/models/Qwen2.5-3B-Instruct &
 server_pid=$!
-wget https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json
 
 # wait for server to start, timeout after 600 seconds
 timeout 600 bash -c 'until curl localhost:8000/v1/models; do sleep 1; done' || exit 1
-python3 benchmarks/benchmark_serving.py \
-    --backend vllm \
+python3 benchmarks/benchmark_serving_custom.py \
+    --backend openai-chat \
     --dataset-name sharegpt \
-    --dataset-path ./ShareGPT_V3_unfiltered_cleaned_split.json \
-    --model meta-llama/Llama-2-7b-chat-hf \
-    --num-prompts 20 \
-    --endpoint /v1/completions \
-    --tokenizer meta-llama/Llama-2-7b-chat-hf \
+    --dataset-path /app/datasets/ShareGPT_V3_unfiltered_cleaned_split.json \
+    --model /app/models/Qwen2.5-3B-Instruct \
+    --num-prompts 100 \
+    --endpoint /v1/chat/completions \
+    --tokenizer /app/models/Qwen2.5-3B-Instruct \
+    --request-rate 1 \
+    --turn-request-rate 1 \
+    --rag-dataset /app/datasets/Cohere/wikipedia-22-12-simple-embeddings \
+    --rag-model multilingual-22-12 \
     --save-result \
     2>&1 | tee benchmark_serving.txt
 bench_serving_exit_code=$?
@@ -76,5 +79,4 @@ if [ $bench_serving_exit_code -ne 0 ]; then
     exit $bench_serving_exit_code
 fi
 
-rm ShareGPT_V3_unfiltered_cleaned_split.json
 buildkite-agent artifact upload "*.json"
